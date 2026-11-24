@@ -149,6 +149,13 @@
             <property name="tooltip-text" translatable="yes">Do not restore windows' monitor.</property>
           </object>
         </child>
+        <child>
+          <object class="AdwSwitchRow" id="multi-window-switch">
+            <property name="subtitle" translatable="yes">Save every window of an app separately instead of one window per app.</property>
+            <property name="title" translatable="yes">Multiple Windows per App</property>
+            <property name="tooltip-text" translatable="yes">Save every window of an app separately instead of one window per app.</property>
+          </object>
+        </child>
       </object>
     </child>
   </object>

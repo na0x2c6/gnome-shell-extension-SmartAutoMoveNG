@@ -201,6 +201,7 @@ export default class SmartAutoMoveNG extends Extension {
             [Common.SETTINGS_KEY_OVERRIDES, this._onParamChangedOverrides.bind(this)],
             [Common.SETTINGS_KEY_SAVED_WINDOWS, this._onParamChangedSavedWindows.bind(this)],
             [Common.SETTINGS_KEY_IGNORE_MONITOR, this._onParamChangedIgnoreMonitor.bind(this)],
+            [Common.SETTINGS_KEY_MULTI_WINDOW, this._onParamChangedMultiWindow.bind(this)],
         ];
         for (const [key, handler] of signalMap) {
             this._settings.connectObject("changed::" + key, handler, this);
@@ -577,6 +578,7 @@ export default class SmartAutoMoveNG extends Extension {
         this._activateWorkspace = null;
         this._ignorePosition = null;
         this._ignoreWorkspace = null;
+        this._multiWindow = null;
         this._overrides = null;
         this._savedWindows = null;
         this._invalidJsonSettings = null;
@@ -595,6 +597,7 @@ export default class SmartAutoMoveNG extends Extension {
         this._onParamChangedOverrides();
         this._onParamChangedSavedWindows();
         this._onParamChangedIgnoreMonitor();
+        this._onParamChangedMultiWindow();
         this._dumpSavedWindows();
         // Update the UI to reflect the restored settings - has to be last to not show notifications too early
         this._onParamChangedUI();
@@ -1078,6 +1081,38 @@ export default class SmartAutoMoveNG extends Extension {
         return this._matchedWindow(wsh, title, true, windowRole);
     }
 
+    // [slot index, slot, whether it belongs to another open window]
+    _matchedRestoreSlot(win, wsh, windowRole) {
+        const title = this._windowTitle(win);
+        const [swi, sw] = this._matchedUnreservedWindow(wsh, title, windowRole);
+        if (swi !== undefined) return [swi, sw, false];
+        // In multi-window mode every window gets a slot of its own, so another
+        // open window's slot is no template for this one.
+        if (win.get_transient_for() !== null || this._usesMultiWindowSlots(win)) return [undefined, undefined, false];
+        const [occupiedSwi, occupiedSw] = this._matchedOccupiedWindow(wsh, title, windowRole);
+        return [occupiedSwi, occupiedSw, occupiedSwi !== undefined];
+    }
+
+    _usesMultiWindowSlots(win) {
+        // picture-in-picture and similar roles keep their single slot
+        if (this._windowRole(win) !== null) return false;
+        const override = Common.findOverride(this._overrides, this._windowSectionHash(win), this._windowData(win), 1);
+        return override.multi_window ?? this._multiWindow ?? false;
+    }
+
+    _trimSavedWindows(wsh) {
+        // slot indices are held by running restores; trim once they are done
+        if (this._activeRestores.size > 0) return;
+        const sws = this._savedWindows[wsh];
+        while (sws.length > Common.MULTI_WINDOW_MAX_SLOTS) {
+            const oldest = Common.leastRecentlySeenUnoccupied(sws);
+            if (oldest === undefined) return;
+            this._debug("_trimSavedWindows() - dropped: " + JSON.stringify(sws[oldest]));
+            sws.splice(oldest, 1);
+            this._queueSaveSettings();
+        }
+    }
+
     _matchingSavedWindow(win) {
         return Common.matchingSavedWindow(
             this._savedWindows,
@@ -1114,6 +1149,11 @@ export default class SmartAutoMoveNG extends Extension {
         this._removeSavedWindowFromOtherSections(this._windowHash(win), wsh);
 
         if (!this._updateSavedWindow(win)) {
+            if (this._usesMultiWindowSlots(win)) {
+                this._pushSavedWindow(win);
+                this._trimSavedWindows(wsh);
+                return;
+            }
             const [swi, sw] = this._matchingSavedWindow(win);
             if (swi === undefined) {
                 this._pushSavedWindow(win);
@@ -1300,12 +1340,7 @@ export default class SmartAutoMoveNG extends Extension {
 
         let [swi] = Common.findSavedWindow(this._savedWindows, wsh, { hash: this._windowHash(win), occupied: true }, 1);
         if (swi !== undefined) return false;
-        let [swiNew, sw] = this._matchedUnreservedWindow(wsh, this._windowTitle(win), windowRole);
-        let nonPersistent = false;
-        if (swiNew === undefined && win.get_transient_for() === null) {
-            [swiNew, sw] = this._matchedOccupiedWindow(wsh, this._windowTitle(win), windowRole);
-            nonPersistent = swiNew !== undefined;
-        }
+        const [swiNew, sw, nonPersistent] = this._matchedRestoreSlot(win, wsh, windowRole);
         swi = swiNew;
         if (swi === undefined) return false;
         if (this._windowDataEqual(sw, this._windowData(win))) return true;
@@ -1586,6 +1621,11 @@ export default class SmartAutoMoveNG extends Extension {
                 this._syncWindowWithErrorLogging(win, "saved windows change handler");
             }
         });
+    }
+
+    _onParamChangedMultiWindow() {
+        this._multiWindow = this._settings.get_boolean(Common.SETTINGS_KEY_MULTI_WINDOW);
+        this._debug("_onParamChangedMultiWindow(): " + this._multiWindow);
     }
 
     _onParamChangedIgnoreMonitor() {

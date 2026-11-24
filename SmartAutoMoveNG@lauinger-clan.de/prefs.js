@@ -302,6 +302,7 @@ export default class SAMPreferences extends ExtensionPreferences {
             [Common.SETTINGS_KEY_IGNORE_POSITION, "ignore-position-switch", "active"],
             [Common.SETTINGS_KEY_IGNORE_WORKSPACE, "ignore-workspace-switch", "active"],
             [Common.SETTINGS_KEY_IGNORE_MONITOR, "ignore-monitor-switch", "active"],
+            [Common.SETTINGS_KEY_MULTI_WINDOW, "multi-window-switch", "active"],
         ];
 
         for (const [key, widgetId, property] of generalBindings) {
@@ -691,6 +692,7 @@ export default class SAMPreferences extends ExtensionPreferences {
                 Common.SETTINGS_KEY_IGNORE_POSITION,
                 Common.SETTINGS_KEY_IGNORE_WORKSPACE,
                 Common.SETTINGS_KEY_IGNORE_MONITOR,
+                Common.SETTINGS_KEY_MULTI_WINDOW,
             ];
             for (const key of keys) {
                 if (settings.is_writable(key)) {
