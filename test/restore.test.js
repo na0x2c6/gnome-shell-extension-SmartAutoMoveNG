@@ -401,6 +401,11 @@ function withMonitors(connectors, primary, body) {
     context.global.backend = {
         get_monitor_manager: () => ({
             get_monitor_for_connector: (connector) => connectors.indexOf(connector),
+            get_logical_monitors: () =>
+                connectors.map((connector, index) => ({
+                    get_number: () => index,
+                    get_monitors: () => [{ get_connector: () => connector }],
+                })),
         }),
     };
     const display = context.global.display;
@@ -472,4 +477,36 @@ test("does not stick windows that were only on all workspaces because of their m
     await restoreGeometry(win, { ...savedWindow, workspace: 2, on_all_workspaces_by_monitor: true });
     assert.equal(win.onAllWorkspaces, false);
     assert.equal(win.workspace, 2);
+});
+
+test("restores the geometry saved for the current monitor layout", () => {
+    const saved = {
+        ...savedWindow,
+        monitor: 0,
+        x: 100,
+        layouts: {
+            "DP-1,eDP-1": { x: 2500, y: 100, width: 800, height: 600, monitor: 1, monitor_connector: "DP-1" },
+            "eDP-1": { x: 40, y: 60, width: 700, height: 500, monitor: 0, monitor_connector: "eDP-1" },
+        },
+    };
+    withMonitors(["eDP-1", "DP-1"], 0, () => {
+        const target = restoreTarget(saved);
+        assert.deepEqual([target.monitor, target.x, target.width], [1, 2500, 800]);
+    });
+    withMonitors(["eDP-1"], 0, () => {
+        const target = restoreTarget(saved);
+        assert.deepEqual([target.monitor, target.x, target.width], [0, 40, 700]);
+    });
+});
+
+test("keeps the geometry of other monitor layouts when saving", () => {
+    const docked = { x: 2500, y: 100, width: 800, height: 600, monitor: 1 };
+    const saved = { ...savedWindow, title: "Project Board - Alpha", occupied: true, hash: 1, layouts: { "DP-1,eDP-1": docked } };
+    const extension = ciderExtension({ chrome: [saved] });
+    const win = appWindow(1, "chrome", "Project Board - Alpha");
+    win.data = { ...saved, x: 40, monitor: 0, layouts: { "eDP-1": { x: 40, y: 150, width: 800, height: 600, monitor: 0 } } };
+    extension._ensureSavedWindow(win);
+    const layouts = extension._savedWindows.chrome[0].layouts;
+    assert.deepEqual(Object.keys(layouts).sort(), ["DP-1,eDP-1", "eDP-1"]);
+    assert.equal(layouts["DP-1,eDP-1"], docked);
 });

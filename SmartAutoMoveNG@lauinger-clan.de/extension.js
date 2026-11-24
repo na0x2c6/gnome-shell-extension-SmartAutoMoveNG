@@ -840,10 +840,20 @@ export default class SmartAutoMoveNG extends Extension {
             const workArea = win.get_work_area_for_monitor(data.monitor);
             data.monitor_work_area = { x: workArea.x, y: workArea.y, width: workArea.width, height: workArea.height };
         }
+        data.layouts = { [this._monitorLayoutKey()]: Common.layoutGeometry(data) };
         const windowRole = this._windowRole(win);
         if (windowRole !== null) data.window_role = windowRole;
 
         return data;
+    }
+
+    _monitorLayoutKey() {
+        return global.backend
+            .get_monitor_manager()
+            .get_logical_monitors()
+            .flatMap((logicalMonitor) => logicalMonitor.get_monitors().map((monitor) => monitor.get_connector()))
+            .sort()
+            .join(",");
     }
 
     _monitorConnector(monitor) {
@@ -866,7 +876,9 @@ export default class SmartAutoMoveNG extends Extension {
     // Where a saved window goes on the current monitors. A window whose
     // monitor is gone keeps its relative place on the primary monitor rather
     // than being pushed against the edge of whatever output is left.
-    _restoreTarget(sw) {
+    _restoreTarget(savedWindow) {
+        const layout = savedWindow.layouts ? savedWindow.layouts[this._monitorLayoutKey()] : undefined;
+        const sw = layout ? { ...savedWindow, ...layout } : savedWindow;
         if (this._ignoreMonitor || sw.monitor === undefined) return sw;
 
         const monitor = this._savedMonitorIndex(sw);
@@ -961,6 +973,8 @@ export default class SmartAutoMoveNG extends Extension {
         const [swi] = Common.findSavedWindow(this._savedWindows, wsh, { hash: this._windowHash(win) }, 1);
         if (swi === undefined) return false;
         const sw = this._windowData(win);
+        // keep what was saved for the other monitor layouts
+        sw.layouts = { ...this._savedWindows[wsh][swi].layouts, ...sw.layouts };
         if (this._windowDataEqual(this._savedWindows[wsh][swi], sw)) return true;
         this._savedWindows[wsh][swi] = sw;
         this._debug("_updateSavedWindow() - updated: " + swi + ", " + JSON.stringify(sw));

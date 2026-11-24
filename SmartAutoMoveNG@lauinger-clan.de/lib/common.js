@@ -215,6 +215,29 @@ export function findSavedWindow(saved_windows, wsh, query, threshold, filter = n
     return [found, best_score];
 }
 
+// What is remembered separately for each monitor layout; the workspace and
+// window state that do not depend on the monitors stay shared.
+const LAYOUT_GEOMETRY_KEYS = [
+    "x",
+    "y",
+    "width",
+    "height",
+    "maximized",
+    "fullscreen",
+    "monitor",
+    "monitor_connector",
+    "monitor_work_area",
+    "on_all_workspaces_by_monitor",
+];
+
+export function layoutGeometry(sw) {
+    const geometry = {};
+    for (const key of LAYOUT_GEOMETRY_KEYS) {
+        if (Object.hasOwn(sw, key)) geometry[key] = sw[key];
+    }
+    return geometry;
+}
+
 // Places rect, saved relative to savedArea, at the same relative position in
 // area, shrinking it to fit. Without savedArea it is only moved inside area.
 export function fitRectToArea(rect, savedArea, area) {
