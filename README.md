@@ -68,6 +68,8 @@ Next is to choose your global **Match Threshold**, the default works well for mo
 
 Advanced users can also adjust the **Startup Delay** (how long a new window is observed before it is saved) and the **Stale Window Threshold** (days without seeing a saved window before **Cleanup Stale Windows** removes it).
 
+Enable **Multiple Windows per App** to save every window of an application separately, e.g. several browser or PWA windows kept on different workspaces. Without it, one window per application is saved.
+
 After you've dialed in your overrides, the learning apparatus can be paused. enable **Freeze Saves** to prevent changes to Saved Windows. N.B. this lose track of windows if their titles change.
 
 ### Overrides
@@ -84,11 +86,13 @@ You can change the IGNORE/RESTORE behavior here for apps and windows.
 
 For applications, a custom **Match Threshold** can be set.
 
+**Multiple Windows per App** can be turned on or off for a single application by adding `"multi_window": true` or `false` to its override (see [Settings](#settings)).
+
 ## Limitations
 
 LIMITATION: Terminals which include the current directory in the title may not reach the match threshold if they do not preserve the working directory across restarts. WORKAROUND: create a per-app override (see above) and set the threshold to a lower value, eg. `0.2`
 
-LIMITATION: Multi-monitor is not well supported and may result in windows becoming "stuck". WORKAROUND: visit the "Saved Windows" tab in preferences and delete any stuck windows.
+LIMITATION: With **Multiple Windows per App**, windows of one application that reopen with the same title, size and maximized state cannot be told apart, so they may swap places. Windows that do not match any saved window well enough are left where they open.
 
 ## Troubleshooting
 
@@ -105,6 +109,12 @@ $ gnome-extensions enable SmartAutoMoveNG@lauinger-clan.de
 ## Behavior
 
 SmartAutoMoveNG saves one normal window slot per application identity (`WM_CLASS`). Additional matching windows restore from that slot without overwriting it. Browser picture-in-picture windows and the Cider miniplayer each have a separate slot from their application’s normal window.
+
+With **Multiple Windows per App**, every window gets a slot of its own (at most ten per application; the unused slot seen least recently is dropped first). When an application opens several windows in a burst, e.g. a browser restoring its session, SmartAutoMoveNG waits until the burst is over and then pairs the windows with the saved slots as a group, by title similarity, the size the window reopened with and its maximized state. A tag that an application sets on its window (Wayland `xdg-toplevel-tag`) identifies it on its own.
+
+Windows that are already open when the extension is enabled are left where they are. GNOME disables extensions while the screen is locked, so this keeps windows in place across lock and unlock.
+
+Monitors are identified by their connector (e.g. `DP-1`), so a window returns to the same monitor after it was unplugged and plugged back. Geometry is remembered separately for each set of connected monitors, e.g. docked and undocked. If the saved monitor is missing, the window goes to the same relative place on the primary monitor, shrunk to fit. Windows shown on all workspaces only because they were on a secondary monitor (with workspaces on the primary monitor only) return to the workspace that was active when they were saved. Moves made by GNOME in the first seconds after monitors change are not saved.
 
 Renaming an autostart `.desktop` file does not give its windows a separate identity if the application still reports the same `WM_CLASS`.
 
@@ -124,6 +134,13 @@ Set the minimum window/title match threshold to 50%:
 
 ```
 $ dconf write /org/gnome/shell/extensions/SmartAutoMoveNG/match-threshold 0.5
+```
+
+Save every window of an application separately, except for Nautilus:
+
+```
+$ dconf write /org/gnome/shell/extensions/SmartAutoMoveNG/multi-window true
+$ dconf write /org/gnome/shell/extensions/SmartAutoMoveNG/overrides '{"org.gnome.Nautilus": [{"multi_window": false}]}'
 ```
 
 Default to ignoring windows unless explicitly defined. Restore all windows of the gnome-calculator app, all firefox windows except for the profile chooser, and Nautilus only if the window title is "Downloads":
