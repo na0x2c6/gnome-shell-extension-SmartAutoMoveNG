@@ -16,6 +16,9 @@ import * as PopupMenu from "resource:///org/gnome/shell/ui/popupMenu.js";
 import * as Common from "./lib/common.js";
 
 const QuickSettingsMenu = Main.panel.statusArea.quickSettings;
+// Mutter relocates windows while monitors come and go (also around suspend);
+// saving during that time would replace the user's layout with Mutter's.
+const MONITORS_CHANGED_SAVE_PAUSE_MS = 5000;
 const SAVE_DEBOUNCE_MS = 1000;
 
 //quick settings
@@ -165,6 +168,14 @@ export default class SmartAutoMoveNG extends Extension {
         this._provisionalPictureInPictureWindows = new Map();
         this._windowTracker = Shell.WindowTracker.get_default();
         this._startupTrackerConnected = false;
+        this._savePausedUntil = 0;
+        Main.layoutManager.connectObject(
+            "monitors-changed",
+            () => {
+                this._savePausedUntil = Date.now() + MONITORS_CHANGED_SAVE_PAUSE_MS;
+            },
+            this
+        );
 
         // Sync windows which might already be open before enabling the extension.
         this._syncWindows().catch((error) => {
@@ -231,6 +242,7 @@ export default class SmartAutoMoveNG extends Extension {
 
         this._cleanupWindowSignals();
         this._windowCreatedSignal = null;
+        Main.layoutManager.disconnectObject(this);
         if (this._startupTrackerConnected) {
             this._windowTracker.disconnectObject(this);
             this._startupTrackerConnected = false;
@@ -1008,6 +1020,8 @@ export default class SmartAutoMoveNG extends Extension {
 
     _ensureSavedWindow(win) {
         if (Main.screenShield?.active || Main.sessionMode?.isLocked) return;
+
+        if (Date.now() < this._savePausedUntil) return;
 
         if (this._nonPersistentWindows.has(win)) return;
 

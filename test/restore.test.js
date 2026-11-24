@@ -381,3 +381,18 @@ test("still restores additional windows opened after the extension is enabled", 
     await extension._syncWindow(second);
     assert.equal(second.restored, firstSaved);
 });
+
+test("does not save window geometry while monitors are being reconfigured", () => {
+    const saved = { ...savedWindow, title: "Project Board - Alpha", occupied: true, hash: 1, x: 2100 };
+    const extension = ciderExtension({ chrome: [saved] });
+    const win = appWindow(1, "chrome", "Project Board - Alpha");
+    win.data = { ...saved, x: 100 };
+
+    extension._savePausedUntil = Date.now() + 60000;
+    extension._ensureSavedWindow(win);
+    assert.equal(extension._savedWindows.chrome[0].x, 2100);
+
+    extension._savePausedUntil = 0;
+    extension._ensureSavedWindow(win);
+    assert.equal(extension._savedWindows.chrome[0].x, 100);
+});
