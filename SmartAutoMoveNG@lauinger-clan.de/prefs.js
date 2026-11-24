@@ -569,6 +569,8 @@ export default class SAMPreferences extends ExtensionPreferences {
             sw,
             settings,
             (newData) => {
+                // the connector would otherwise override the edited monitor number
+                if (newData.monitor !== sw.monitor) delete sw.monitor_connector;
                 Object.assign(sw, newData);
                 settings.set_string(Common.SETTINGS_KEY_SAVED_WINDOWS, JSON.stringify(saved_windows));
             },

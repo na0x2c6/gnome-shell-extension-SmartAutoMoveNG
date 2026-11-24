@@ -396,3 +396,23 @@ test("does not save window geometry while monitors are being reconfigured", () =
     extension._ensureSavedWindow(win);
     assert.equal(extension._savedWindows.chrome[0].x, 100);
 });
+
+test("restores onto the saved monitor's connector even when monitor indices changed", async () => {
+    context.global.backend = {
+        get_monitor_manager: () => ({
+            get_monitor_for_connector: (connector) => ({ "DP-1": 0, "eDP-1": 1 })[connector] ?? -1,
+        }),
+    };
+    try {
+        const win = new WaylandWindow();
+        win.monitor = 1;
+        await restoreGeometry(win, { ...savedWindow, monitor: 1, monitor_connector: "DP-1" });
+        assert.equal(win.monitor, 0);
+
+        const unknown = new WaylandWindow();
+        await restoreGeometry(unknown, { ...savedWindow, monitor: 1, monitor_connector: "HDMI-1" });
+        assert.equal(unknown.monitor, 1);
+    } finally {
+        delete context.global.backend;
+    }
+});

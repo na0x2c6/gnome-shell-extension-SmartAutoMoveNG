@@ -822,10 +822,30 @@ export default class SmartAutoMoveNG extends Extension {
             occupied: true,
             last_seen: Date.now(),
         };
+        const monitorConnector = this._monitorConnector(data.monitor);
+        if (monitorConnector !== null) data.monitor_connector = monitorConnector;
         const windowRole = this._windowRole(win);
         if (windowRole !== null) data.window_role = windowRole;
 
         return data;
+    }
+
+    _monitorConnector(monitor) {
+        const logicalMonitor = global.backend
+            .get_monitor_manager()
+            .get_logical_monitors()
+            .find((candidate) => candidate.get_number() === monitor);
+        return logicalMonitor?.get_monitors()[0]?.get_connector() ?? null;
+    }
+
+    // Monitor indices follow the order outputs were detected in and change
+    // when a monitor is unplugged or replugged; connector names do not.
+    _savedMonitorIndex(sw) {
+        if (sw.monitor_connector) {
+            const monitor = global.backend.get_monitor_manager().get_monitor_for_connector(sw.monitor_connector);
+            if (monitor >= 0) return monitor;
+        }
+        return sw.monitor;
     }
 
     _windowRepr(win) {
@@ -1112,7 +1132,7 @@ export default class SmartAutoMoveNG extends Extension {
         if (!sw.maximized && (win.maximized_horizontally || win.maximized_vertically)) win.unmaximize();
 
         if (!this._ignoreMonitor) {
-            this._moveWindowToMonitor(win, sw.monitor);
+            this._moveWindowToMonitor(win, this._savedMonitorIndex(sw));
         }
         if (!this._ignoreWorkspace) {
             this._moveWindowToWorkspace(win, sw.workspace, sw.on_all_workspaces);
