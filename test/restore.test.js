@@ -342,3 +342,42 @@ test("retries a skipped Cider popup when its miniplayer title arrives and remove
     assert.equal(extension._provisionalPictureInPictureWindows.size, 0);
     assert.equal(mini.handlers.size, 0);
 });
+
+function appWindow(id, wmClass, title) {
+    const win = ciderWindow(id, title);
+    win.get_wm_class = () => wmClass;
+    return win;
+}
+
+test("keeps windows that are already open when the extension is enabled again", async () => {
+    const firstSaved = { ...savedWindow, title: "Project Board - Alpha", occupied: true, hash: 1, workspace: 0 };
+    const extension = ciderExtension({ chrome: [firstSaved] });
+    Object.assign(extension, {
+        _adoptedWindows: new WeakSet(),
+        _checkForPendingWindows: () => false,
+    });
+    const first = appWindow(1, "chrome", "Project Board - Alpha");
+    const second = appWindow(2, "chrome", "Project Board - Beta");
+    context.global.get_window_actors = () => [first, second].map((win) => ({ get_meta_window: () => win }));
+    try {
+        await extension._syncWindows();
+        assert.equal(first.restored, undefined);
+        assert.equal(second.restored, undefined);
+
+        // A later title change re-syncs the window; it must still stay put.
+        await extension._syncWindow(second);
+        assert.equal(second.restored, undefined);
+        assert.equal(extension._nonPersistentWindows.size, 0);
+    } finally {
+        delete context.global.get_window_actors;
+    }
+});
+
+test("still restores additional windows opened after the extension is enabled", async () => {
+    const firstSaved = { ...savedWindow, title: "Inbox", occupied: true, hash: 1 };
+    const extension = ciderExtension({ chrome: [firstSaved] });
+    extension._adoptedWindows = new WeakSet();
+    const second = appWindow(2, "chrome", "Inbox");
+    await extension._syncWindow(second);
+    assert.equal(second.restored, firstSaved);
+});

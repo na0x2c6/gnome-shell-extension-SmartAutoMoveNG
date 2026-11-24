@@ -157,6 +157,7 @@ export default class SmartAutoMoveNG extends Extension {
         this._restoreSaveGuards = new Map();
         this._nonPersistentWindows = new Map();
         this._windowRoles = new WeakMap();
+        this._adoptedWindows = new WeakSet();
         this._reservedSavedWindows = new Map();
         this._pendingWindows = new Map();
         this._pendingWindowSignals = new Map();
@@ -254,6 +255,7 @@ export default class SmartAutoMoveNG extends Extension {
         this._nonPersistentWindows.clear();
         this._nonPersistentWindows = null;
         this._windowRoles = null;
+        this._adoptedWindows = null;
         this._reservedSavedWindows.clear();
         this._reservedSavedWindows = null;
         this._windowTracker = null;
@@ -1348,6 +1350,9 @@ export default class SmartAutoMoveNG extends Extension {
         const processWindow = async (index) => {
             if (index >= windows.length) return;
             const win = windows[index];
+            // GNOME disables extensions on screen lock and enables them again on
+            // unlock, so windows open at enable time are the user's current layout.
+            this._adoptedWindows.add(win);
             if (this._shouldSkipWindow(win)) {
                 this._trackProvisionalPictureInPictureWindow(win);
                 await processWindow(index + 1);
@@ -1370,7 +1375,7 @@ export default class SmartAutoMoveNG extends Extension {
             return true;
         }
         if (this._activeRestores.has(win)) return true;
-        const restored = await this._restoreWindow(win);
+        const restored = this._adoptedWindows?.has(win) ? false : await this._restoreWindow(win);
         if (restored === null) return this._activeRestores !== null;
         this._trackWindow(win);
         if (!restored) this._ensureSavedWindow(win);
