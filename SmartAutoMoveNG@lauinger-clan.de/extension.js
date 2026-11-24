@@ -824,6 +824,13 @@ export default class SmartAutoMoveNG extends Extension {
         };
         const monitorConnector = this._monitorConnector(data.monitor);
         if (monitorConnector !== null) data.monitor_connector = monitorConnector;
+        // While monitors are removed, windows still report the index of the
+        // monitor that is gone, and Mutter aborts the shell when asked for its
+        // work area.
+        if (data.monitor >= 0 && data.monitor < global.display.get_n_monitors()) {
+            const workArea = win.get_work_area_for_monitor(data.monitor);
+            data.monitor_work_area = { x: workArea.x, y: workArea.y, width: workArea.width, height: workArea.height };
+        }
         const windowRole = this._windowRole(win);
         if (windowRole !== null) data.window_role = windowRole;
 
@@ -842,10 +849,28 @@ export default class SmartAutoMoveNG extends Extension {
     // when a monitor is unplugged or replugged; connector names do not.
     _savedMonitorIndex(sw) {
         if (sw.monitor_connector) {
-            const monitor = global.backend.get_monitor_manager().get_monitor_for_connector(sw.monitor_connector);
-            if (monitor >= 0) return monitor;
+            return global.backend.get_monitor_manager().get_monitor_for_connector(sw.monitor_connector);
         }
-        return sw.monitor;
+        return sw.monitor < global.display.get_n_monitors() ? sw.monitor : -1;
+    }
+
+    // Where a saved window goes on the current monitors. A window whose
+    // monitor is gone keeps its relative place on the primary monitor rather
+    // than being pushed against the edge of whatever output is left.
+    _restoreTarget(sw) {
+        if (this._ignoreMonitor || sw.monitor === undefined) return sw;
+
+        const monitor = this._savedMonitorIndex(sw);
+        if (monitor === sw.monitor) return sw;
+        if (monitor >= 0) return { ...sw, monitor };
+
+        const primary = global.display.get_primary_monitor();
+        const workArea = global.workspace_manager.get_active_workspace().get_work_area_for_monitor(primary);
+        return {
+            ...sw,
+            monitor: primary,
+            ...Common.fitRectToArea(sw, sw.monitor_work_area, workArea),
+        };
     }
 
     _windowRepr(win) {
@@ -1132,7 +1157,7 @@ export default class SmartAutoMoveNG extends Extension {
         if (!sw.maximized && (win.maximized_horizontally || win.maximized_vertically)) win.unmaximize();
 
         if (!this._ignoreMonitor) {
-            this._moveWindowToMonitor(win, this._savedMonitorIndex(sw));
+            this._moveWindowToMonitor(win, sw.monitor);
         }
         if (!this._ignoreWorkspace) {
             this._moveWindowToWorkspace(win, sw.workspace, sw.on_all_workspaces);
@@ -1280,24 +1305,25 @@ export default class SmartAutoMoveNG extends Extension {
         this._activeRestores.set(win, restore);
 
         try {
+            const target = this._restoreTarget(sw);
             const pWinRepr = this._windowRepr(win);
             const retryCount = 5; // give the window more chances to be in the correct state before giving up - seems to help Firefox
             const moveWindow = async (attempt) => {
-                const nsw = await this._moveWindow(win, sw);
+                const nsw = await this._moveWindow(win, target);
                 if (nsw === null) return null;
 
-                const positionMatches = this._ignorePosition || (sw.x === nsw.x && sw.y === nsw.y);
-                const sizeMatches = sw.width === nsw.width && sw.height === nsw.height;
+                const positionMatches = this._ignorePosition || (target.x === nsw.x && target.y === nsw.y);
+                const sizeMatches = target.width === nsw.width && target.height === nsw.height;
                 if (positionMatches && sizeMatches) {
                     const attemptText = attempt > 0 ? " (attempt " + (attempt + 1) + ")" : "";
                     this._debug(
-                        `Geometry match after move${attemptText}: expected (${sw.x}, ${sw.y}, ${sw.width}x${sw.height}), got (${nsw.x}, ${nsw.y}, ${nsw.width}x${nsw.height}) for window ${pWinRepr}`
+                        `Geometry match after move${attemptText}: expected (${target.x}, ${target.y}, ${target.width}x${target.height}), got (${nsw.x}, ${nsw.y}, ${nsw.width}x${nsw.height}) for window ${pWinRepr}`
                     );
                     return nsw;
                 }
 
                 this.getLogger().warn(
-                    `Geometry mismatch after move: expected (${sw.x}, ${sw.y}, ${sw.width}x${sw.height}), got (${nsw.x}, ${nsw.y}, ${nsw.width}x${nsw.height}) for window ${pWinRepr}`
+                    `Geometry mismatch after move: expected (${target.x}, ${target.y}, ${target.width}x${target.height}), got (${nsw.x}, ${nsw.y}, ${nsw.width}x${nsw.height}) for window ${pWinRepr}`
                 );
                 if (attempt + 1 < retryCount) return moveWindow(attempt + 1);
                 return nsw;

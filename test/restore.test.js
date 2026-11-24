@@ -397,22 +397,72 @@ test("does not save window geometry while monitors are being reconfigured", () =
     assert.equal(extension._savedWindows.chrome[0].x, 100);
 });
 
-test("restores onto the saved monitor's connector even when monitor indices changed", async () => {
+function withMonitors(connectors, primary, body) {
     context.global.backend = {
         get_monitor_manager: () => ({
-            get_monitor_for_connector: (connector) => ({ "DP-1": 0, "eDP-1": 1 })[connector] ?? -1,
+            get_monitor_for_connector: (connector) => connectors.indexOf(connector),
         }),
     };
+    const display = context.global.display;
+    context.global.display = {
+        get_n_monitors: () => connectors.length,
+        get_primary_monitor: () => primary,
+    };
+    context.global.workspace_manager.get_active_workspace = () => ({
+        get_work_area_for_monitor: () => ({ x: 0, y: 32, width: 1280, height: 768 }),
+    });
     try {
-        const win = new WaylandWindow();
-        win.monitor = 1;
-        await restoreGeometry(win, { ...savedWindow, monitor: 1, monitor_connector: "DP-1" });
-        assert.equal(win.monitor, 0);
-
-        const unknown = new WaylandWindow();
-        await restoreGeometry(unknown, { ...savedWindow, monitor: 1, monitor_connector: "HDMI-1" });
-        assert.equal(unknown.monitor, 1);
+        return body();
     } finally {
         delete context.global.backend;
+        context.global.display = display;
+        delete context.global.workspace_manager.get_active_workspace;
     }
+}
+
+function restoreTarget(saved, options = {}) {
+    const extension = new extensionModule.namespace.default();
+    Object.assign(extension, { _ignoreMonitor: false, ...options });
+    return extension._restoreTarget(saved);
+}
+
+test("restores onto the saved monitor's connector even when monitor indices changed", () => {
+    withMonitors(["DP-1", "eDP-1"], 1, () => {
+        const target = restoreTarget({ ...savedWindow, monitor: 1, monitor_connector: "DP-1" });
+        assert.equal(target.monitor, 0);
+        assert.equal(target.x, savedWindow.x);
+    });
+});
+
+test("keeps the relative place on the primary monitor when the saved monitor is gone", () => {
+    withMonitors(["eDP-1"], 0, () => {
+        const saved = {
+            ...savedWindow,
+            monitor: 1,
+            monitor_connector: "DP-1",
+            x: 1920 + 960,
+            y: 540,
+            width: 2400,
+            height: 600,
+            monitor_work_area: { x: 1920, y: 0, width: 1920, height: 1080 },
+        };
+        const target = restoreTarget(saved);
+        assert.equal(target.monitor, 0);
+        // shrunk to the work area, then kept inside it
+        assert.deepEqual([target.x, target.y, target.width, target.height], [0, 200, 1280, 600]);
+    });
+});
+
+test("falls back to the saved index for records without a connector", () => {
+    withMonitors(["eDP-1", "DP-1"], 0, () => {
+        assert.equal(restoreTarget({ ...savedWindow, monitor: 1 }).monitor, 1);
+        assert.equal(restoreTarget({ ...savedWindow, monitor: 2, x: 5000 }).x, 1280 - savedWindow.width);
+    });
+});
+
+test("leaves the saved monitor untouched when the monitor is ignored", () => {
+    withMonitors(["eDP-1"], 0, () => {
+        const saved = { ...savedWindow, monitor: 1, monitor_connector: "DP-1" };
+        assert.equal(restoreTarget(saved, { _ignoreMonitor: true }), saved);
+    });
 });

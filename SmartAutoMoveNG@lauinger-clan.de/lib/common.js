@@ -215,6 +215,22 @@ export function findSavedWindow(saved_windows, wsh, query, threshold, filter = n
     return [found, best_score];
 }
 
+// Places rect, saved relative to savedArea, at the same relative position in
+// area, shrinking it to fit. Without savedArea it is only moved inside area.
+export function fitRectToArea(rect, savedArea, area) {
+    const width = Math.min(rect.width, area.width);
+    const height = Math.min(rect.height, area.height);
+    let x = rect.x;
+    let y = rect.y;
+    if (savedArea?.width > 0 && savedArea?.height > 0) {
+        x = area.x + Math.round(((rect.x - savedArea.x) / savedArea.width) * area.width);
+        y = area.y + Math.round(((rect.y - savedArea.y) / savedArea.height) * area.height);
+    }
+    x = Math.min(Math.max(x, area.x), area.x + area.width - width);
+    y = Math.min(Math.max(y, area.y), area.y + area.height - height);
+    return { x, y, width, height };
+}
+
 export function findOverride(overrides, wsh, sw, threshold) {
     const override = {};
 
