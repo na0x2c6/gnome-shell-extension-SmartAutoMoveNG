@@ -824,6 +824,15 @@ export default class SmartAutoMoveNG extends Extension {
         };
         const monitorConnector = this._monitorConnector(data.monitor);
         if (monitorConnector !== null) data.monitor_connector = monitorConnector;
+        // With workspaces only on the primary monitor, Mutter shows windows on
+        // other monitors on all workspaces without the user asking for it.
+        if (
+            data.on_all_workspaces &&
+            Meta.prefs_get_workspaces_only_on_primary() &&
+            data.monitor !== global.display.get_primary_monitor()
+        ) {
+            data.on_all_workspaces_by_monitor = true;
+        }
         // While monitors are removed, windows still report the index of the
         // monitor that is gone, and Mutter aborts the shell when asked for its
         // work area.
@@ -1160,7 +1169,13 @@ export default class SmartAutoMoveNG extends Extension {
             this._moveWindowToMonitor(win, sw.monitor);
         }
         if (!this._ignoreWorkspace) {
-            this._moveWindowToWorkspace(win, sw.workspace, sw.on_all_workspaces);
+            // Sticking a window that was only shown everywhere because of its
+            // monitor would keep it on all workspaces once on the primary one.
+            this._moveWindowToWorkspace(
+                win,
+                sw.workspace,
+                sw.on_all_workspaces && !sw.on_all_workspaces_by_monitor
+            );
         }
         let targetX = sw.x;
         let targetY = sw.y;

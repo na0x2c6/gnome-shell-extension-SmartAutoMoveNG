@@ -466,3 +466,10 @@ test("leaves the saved monitor untouched when the monitor is ignored", () => {
         assert.equal(restoreTarget(saved, { _ignoreMonitor: true }), saved);
     });
 });
+
+test("does not stick windows that were only on all workspaces because of their monitor", async () => {
+    const win = new WaylandWindow();
+    await restoreGeometry(win, { ...savedWindow, workspace: 2, on_all_workspaces_by_monitor: true });
+    assert.equal(win.onAllWorkspaces, false);
+    assert.equal(win.workspace, 2);
+});

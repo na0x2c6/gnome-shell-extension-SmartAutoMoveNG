@@ -571,6 +571,7 @@ export default class SAMPreferences extends ExtensionPreferences {
             (newData) => {
                 // the connector would otherwise override the edited monitor number
                 if (newData.monitor !== sw.monitor) delete sw.monitor_connector;
+                if (newData.on_all_workspaces !== sw.on_all_workspaces) delete sw.on_all_workspaces_by_monitor;
                 Object.assign(sw, newData);
                 settings.set_string(Common.SETTINGS_KEY_SAVED_WINDOWS, JSON.stringify(saved_windows));
             },
