@@ -268,6 +268,49 @@ export function fitRectToArea(rect, savedArea, area) {
     return { x, y, width, height };
 }
 
+function titleSimilarity(a, b) {
+    if (!a || !b) return a === b ? 1 : 0;
+    return Math.max(0, 1 - levensteinDistance(a, b) / Math.max(a.length, b.length));
+}
+
+// How well an open window fits a saved slot, from 0 to 1. Titles alone are
+// unreliable for browsers and terminals, whose titles follow the active tab,
+// so the size the app reopened with and the maximized state count as well.
+// A tag set by the app is an explicit identity and decides on its own.
+export function windowSimilarity(sw, candidate) {
+    if (sw.tag && candidate.tag) return sw.tag === candidate.tag ? 1 : 0;
+
+    const sizeDifference =
+        (Math.abs(sw.width - candidate.width) + Math.abs(sw.height - candidate.height)) / (sw.width + sw.height);
+    const sizeScore = Number.isFinite(sizeDifference) ? Math.max(0, 1 - 5 * sizeDifference) : 0;
+    const maximizedScore = Boolean(sw.maximized) === Boolean(candidate.maximized) ? 1 : 0;
+    return 0.6 * titleSimilarity(sw.title, candidate.title) + 0.3 * sizeScore + 0.1 * maximizedScore;
+}
+
+// Pairs windows with slots, best pairs first, each used at most once. Taking
+// the globally best pair first keeps one window's ambiguous match from
+// stealing the slot that clearly belongs to another. Returns window index ->
+// slot index.
+export function assignSlots(slots, candidates, threshold) {
+    const pairs = [];
+    for (const [ci, candidate] of candidates.entries()) {
+        for (const [si, slot] of slots.entries()) {
+            const score = windowSimilarity(slot, candidate);
+            if (score >= threshold) pairs.push({ ci, si, score });
+        }
+    }
+    pairs.sort((a, b) => b.score - a.score || a.si - b.si || a.ci - b.ci);
+
+    const assigned = new Map();
+    const usedSlots = new Set();
+    for (const { ci, si } of pairs) {
+        if (assigned.has(ci) || usedSlots.has(si)) continue;
+        assigned.set(ci, si);
+        usedSlots.add(si);
+    }
+    return assigned;
+}
+
 export function findOverride(overrides, wsh, sw, threshold) {
     const override = {};
 

@@ -513,7 +513,15 @@ test("keeps the geometry of other monitor layouts when saving", () => {
 
 function multiWindowExtension(savedWindows = {}, options = {}) {
     const extension = ciderExtension(savedWindows);
-    Object.assign(extension, { _multiWindow: true, ...options });
+    Object.assign(extension, {
+        _multiWindow: true,
+        _openWindows: [],
+        _appWindows(wsh) {
+            return this._openWindows.filter((win) => win.get_wm_class() === wsh);
+        },
+        async _settleAppWindows() {},
+        ...options,
+    });
     return extension;
 }
 
@@ -522,6 +530,7 @@ test("gives every window of an app its own slot in multi-window mode", async () 
     const alpha = appWindow(1, "chrome", "Project Board - Alpha");
     const beta = appWindow(2, "chrome", "Project Board - Beta");
     beta.data = { ...beta.data, workspace: 1 };
+    extension._openWindows = [alpha, beta];
     await extension._syncWindow(alpha);
     await extension._syncWindow(beta);
     assert.equal(beta.restored, undefined);
@@ -537,6 +546,7 @@ test("restores each window of an app from its own slot in multi-window mode", as
     const betaSaved = { ...savedWindow, title: "Project Board - Beta", occupied: false, hash: 12, workspace: 1 };
     const extension = multiWindowExtension({ chrome: [alphaSaved, betaSaved] });
     const beta = appWindow(2, "chrome", "Project Board - Beta");
+    extension._openWindows = [beta];
     await extension._syncWindow(beta);
     assert.equal(beta.restored, betaSaved);
     assert.equal(betaSaved.occupied, true);
@@ -549,7 +559,9 @@ test("drops the least recently seen unoccupied slot beyond the per-app limit", a
     }));
     // a strict threshold so the new window does not take over one of the old slots
     const extension = multiWindowExtension({ chrome: slots }, { _matchThreshold: 0.95 });
-    await extension._syncWindow(appWindow(1, "chrome", "Something else entirely"));
+    const win = appWindow(1, "chrome", "Something else entirely");
+    extension._openWindows = [win];
+    await extension._syncWindow(win);
     const titles = extension._savedWindows.chrome.map((sw) => sw.title);
     assert.equal(titles.length, 10);
     assert.ok(titles.includes("Old 0"), "occupied slot is kept although it is the oldest");
@@ -562,4 +574,30 @@ test("an override can turn multi-window mode off for one app", async () => {
     await extension._syncWindow(appWindow(1, "chrome", "Project Board - Alpha"));
     await extension._syncWindow(appWindow(2, "chrome", "Project Board - Beta"));
     assert.equal(extension._savedWindows.chrome.length, 1);
+});
+
+test("assigns reopened windows to slots by size when their titles are alike", async () => {
+    const wide = { ...savedWindow, title: "New Tab", occupied: false, hash: 11, width: 1600, height: 900, workspace: 0 };
+    const narrow = { ...savedWindow, title: "New Tab", occupied: false, hash: 12, width: 700, height: 900, workspace: 1 };
+    const extension = multiWindowExtension({ chrome: [wide, narrow] });
+    const first = appWindow(1, "chrome", "New Tab");
+    first.data = { ...first.data, width: 700, height: 900 };
+    const second = appWindow(2, "chrome", "New Tab");
+    second.data = { ...second.data, width: 1600, height: 900 };
+    extension._openWindows = [first, second];
+    await extension._syncWindow(first);
+    await extension._syncWindow(second);
+    assert.equal(first.restored, narrow);
+    assert.equal(second.restored, wide);
+});
+
+test("leaves a reopened window in place when no slot is similar enough", async () => {
+    const saved = { ...savedWindow, title: "Mail", occupied: false, hash: 11, width: 1600, height: 900 };
+    const extension = multiWindowExtension({ chrome: [saved] }, { _matchThreshold: 0.7 });
+    const win = appWindow(1, "chrome", "Spreadsheet");
+    win.data = { ...win.data, width: 500, height: 400 };
+    extension._openWindows = [win];
+    await extension._syncWindow(win);
+    assert.equal(win.restored, undefined);
+    assert.equal(extension._savedWindows.chrome.length, 2);
 });

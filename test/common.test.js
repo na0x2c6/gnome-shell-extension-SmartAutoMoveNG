@@ -709,3 +709,19 @@ for (const title of ["Cider", "Cider Settings", "", null]) {
     delete savedWindows.cider[1].window_role;
     console.assert(Common.matchingSavedWindow(savedWindows, "cider", pictureInPictureRole)[0] === 1);
 }
+
+// windowSimilarity / assignSlots
+{
+    const slot = { title: "Inbox", width: 1000, height: 800, maximized: false };
+    console.assert(Math.abs(Common.windowSimilarity(slot, { ...slot }) - 1) < 1e-9, "identical window scores 1");
+    console.assert(
+        Common.windowSimilarity({ ...slot, tag: "main" }, { ...slot, tag: "other" }) === 0,
+        "differing tags decide on their own"
+    );
+    const assigned = Common.assignSlots(
+        [{ ...slot, title: "A" }, { ...slot, title: "B" }],
+        [{ ...slot, title: "B" }, { ...slot, title: "A" }],
+        0.5
+    );
+    console.assert(assigned.get(0) === 1 && assigned.get(1) === 0, "each window gets its own best slot");
+}

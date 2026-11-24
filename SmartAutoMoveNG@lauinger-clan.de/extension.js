@@ -19,6 +19,9 @@ const QuickSettingsMenu = Main.panel.statusArea.quickSettings;
 // Mutter relocates windows while monitors come and go (also around suspend);
 // saving during that time would replace the user's layout with Mutter's.
 const MONITORS_CHANGED_SAVE_PAUSE_MS = 5000;
+// Apps reopening several windows (browsers restoring a session) create them
+// in a quick burst; slots are assigned once the burst is over.
+const MULTI_WINDOW_SETTLE_MS = 1000;
 const SAVE_DEBOUNCE_MS = 1000;
 
 //quick settings
@@ -161,6 +164,7 @@ export default class SmartAutoMoveNG extends Extension {
         this._nonPersistentWindows = new Map();
         this._windowRoles = new WeakMap();
         this._adoptedWindows = new WeakSet();
+        this._settlingApps = new Map();
         this._reservedSavedWindows = new Map();
         this._pendingWindows = new Map();
         this._pendingWindowSignals = new Map();
@@ -269,6 +273,8 @@ export default class SmartAutoMoveNG extends Extension {
         this._nonPersistentWindows = null;
         this._windowRoles = null;
         this._adoptedWindows = null;
+        for (const settling of this._settlingApps.values()) settling.resolve();
+        this._settlingApps = null;
         this._reservedSavedWindows.clear();
         this._reservedSavedWindows = null;
         this._windowTracker = null;
@@ -844,6 +850,8 @@ export default class SmartAutoMoveNG extends Extension {
             data.monitor_work_area = { x: workArea.x, y: workArea.y, width: workArea.width, height: workArea.height };
         }
         data.layouts = { [this._monitorLayoutKey()]: Common.layoutGeometry(data) };
+        const tag = win.get_tag();
+        if (tag) data.tag = tag;
         const windowRole = this._windowRole(win);
         if (windowRole !== null) data.window_role = windowRole;
 
@@ -1082,7 +1090,8 @@ export default class SmartAutoMoveNG extends Extension {
     }
 
     // [slot index, slot, whether it belongs to another open window]
-    _matchedRestoreSlot(win, wsh, windowRole) {
+    async _matchedRestoreSlot(win, wsh, windowRole) {
+        if (this._usesMultiWindowSlots(win)) return this._assignedMultiWindowSlot(win, wsh);
         const title = this._windowTitle(win);
         const [swi, sw] = this._matchedUnreservedWindow(wsh, title, windowRole);
         if (swi !== undefined) return [swi, sw, false];
@@ -1091,6 +1100,64 @@ export default class SmartAutoMoveNG extends Extension {
         if (win.get_transient_for() !== null || this._usesMultiWindowSlots(win)) return [undefined, undefined, false];
         const [occupiedSwi, occupiedSw] = this._matchedOccupiedWindow(wsh, title, windowRole);
         return [occupiedSwi, occupiedSw, occupiedSwi !== undefined];
+    }
+
+    async _assignedMultiWindowSlot(win, wsh) {
+        await this._settleAppWindows(wsh);
+        if (this._activeRestores === null) return [undefined, undefined, false];
+
+        const reserved = this._reservedSavedWindows.get(wsh);
+        const slots = (this._savedWindows[wsh] ?? [])
+            .map((sw, swi) => ({ sw, swi }))
+            .filter(({ sw, swi }) => !sw.occupied && !reserved?.has(swi));
+        const windows = this._appWindows(wsh).filter(
+            (candidate) =>
+                candidate === win ||
+                (!this._activeRestores.has(candidate) &&
+                    !this._adoptedWindows?.has(candidate) &&
+                    this._windowRole(candidate) === null &&
+                    Common.findSavedWindow(
+                        this._savedWindows,
+                        wsh,
+                        { hash: this._windowHash(candidate), occupied: true },
+                        1
+                    )[0] === undefined)
+        );
+        const override = Common.findOverride(this._overrides, wsh, this._windowData(win), 1);
+        const assigned = Common.assignSlots(
+            slots.map(({ sw }) => this._restoreTarget(sw)),
+            windows.map((candidate) => this._windowData(candidate)),
+            override.threshold ?? this._matchThreshold
+        );
+        const slot = slots[assigned.get(windows.indexOf(win))];
+        return slot ? [slot.swi, slot.sw, false] : [undefined, undefined, false];
+    }
+
+    _appWindows(wsh) {
+        return global
+            .get_window_actors()
+            .map((actor) => actor.get_meta_window())
+            .filter((candidate) => this._windowSectionHash(candidate) === wsh);
+    }
+
+    // Resolves MULTI_WINDOW_SETTLE_MS after the last call for the same app.
+    _settleAppWindows(wsh) {
+        let settling = this._settlingApps.get(wsh);
+        if (settling) {
+            this._removeTimeout(settling.timeoutId);
+        } else {
+            settling = {};
+            settling.promise = new Promise((resolve) => {
+                settling.resolve = resolve;
+            });
+            this._settlingApps.set(wsh, settling);
+        }
+        settling.timeoutId = this._addTimeout(GLib.PRIORITY_DEFAULT, MULTI_WINDOW_SETTLE_MS, () => {
+            this._settlingApps.delete(wsh);
+            settling.resolve();
+            return GLib.SOURCE_REMOVE;
+        });
+        return settling.promise;
     }
 
     _usesMultiWindowSlots(win) {
@@ -1340,9 +1407,10 @@ export default class SmartAutoMoveNG extends Extension {
 
         let [swi] = Common.findSavedWindow(this._savedWindows, wsh, { hash: this._windowHash(win), occupied: true }, 1);
         if (swi !== undefined) return false;
-        const [swiNew, sw, nonPersistent] = this._matchedRestoreSlot(win, wsh, windowRole);
+        const [swiNew, sw, nonPersistent] = await this._matchedRestoreSlot(win, wsh, windowRole);
         swi = swiNew;
-        if (swi === undefined) return false;
+        // null tells the caller the extension was disabled while waiting
+        if (swi === undefined) return this._activeRestores === null ? null : false;
         if (this._windowDataEqual(sw, this._windowData(win))) return true;
         const action = this._findOverrideAction(win, 1);
         if (action !== Common.SYNC_MODE_RESTORE) {
