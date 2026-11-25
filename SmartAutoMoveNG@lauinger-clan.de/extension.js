@@ -176,7 +176,10 @@ export default class SmartAutoMoveNG extends Extension {
         this._startupTrackerConnected = false;
         this._savePausedUntil = 0;
         this._relayoutTimeoutId = null;
-        this._monitorLayout = this._monitorLayoutKey();
+        // GNOME disables extensions while the screen is locked, so monitors
+        // plugged or unplugged meanwhile are only seen here.
+        if (this._monitorLayout === undefined) this._monitorLayout = this._monitorLayoutKey();
+        else this._checkMonitorLayout();
         Main.layoutManager.connectObject("monitors-changed", () => this._checkMonitorLayout(true), this);
 
         // Sync windows which might already be open before enabling the extension.
