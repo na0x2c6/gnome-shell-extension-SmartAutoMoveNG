@@ -1419,51 +1419,15 @@ export default class SmartAutoMoveNG extends Extension {
             return true;
         }
         if (!nonPersistent && !this._reserveSavedWindow(wsh, swi)) return null;
-        let resolveCompletion;
-        const restore = {
-            wsh,
-            swi,
-            unmanagedId: null,
-            unmanaged: false,
-            completion: new Promise((resolve) => {
-                resolveCompletion = resolve;
-            }),
-        };
-        restore.unmanagedId = win.connect("unmanaged", () => {
-            restore.unmanagedId = null;
-            restore.unmanaged = true;
-            this._cancelActiveRestore(win, restore);
-        });
-        this._activeRestores.set(win, restore);
+        const restore = this._beginRestore(win);
 
         try {
-            const target = this._restoreTarget(sw);
             const pWinRepr = this._windowRepr(win);
-            const retryCount = 5; // give the window more chances to be in the correct state before giving up - seems to help Firefox
-            const moveWindow = async (attempt) => {
-                const nsw = await this._moveWindow(win, target);
-                if (nsw === null) return null;
-
-                const positionMatches = this._ignorePosition || (target.x === nsw.x && target.y === nsw.y);
-                const sizeMatches = target.width === nsw.width && target.height === nsw.height;
-                if (positionMatches && sizeMatches) {
-                    const attemptText = attempt > 0 ? " (attempt " + (attempt + 1) + ")" : "";
-                    this._debug(
-                        `Geometry match after move${attemptText}: expected (${target.x}, ${target.y}, ${target.width}x${target.height}), got (${nsw.x}, ${nsw.y}, ${nsw.width}x${nsw.height}) for window ${pWinRepr}`
-                    );
-                    return nsw;
-                }
-
-                this.getLogger().warn(
-                    `Geometry mismatch after move: expected (${target.x}, ${target.y}, ${target.width}x${target.height}), got (${nsw.x}, ${nsw.y}, ${nsw.width}x${nsw.height}) for window ${pWinRepr}`
-                );
-                if (attempt + 1 < retryCount) return moveWindow(attempt + 1);
-                return nsw;
-            };
-            const nsw = await moveWindow(0);
+            const nsw = await this._moveWindowToTarget(win, this._restoreTarget(sw));
             if (nsw === null) return null;
 
             this._debug("restoreWindow() - moved: " + pWinRepr + " => " + JSON.stringify(nsw));
+
             if (nonPersistent) {
                 const currentWindowRole = this._windowRole(win);
                 if (currentWindowRole !== windowRole) return false;
@@ -1475,15 +1439,64 @@ export default class SmartAutoMoveNG extends Extension {
             return true;
         } finally {
             if (!nonPersistent) this._releaseSavedWindow(wsh, swi);
-            if (restore.unmanagedId !== null) {
-                win.disconnect(restore.unmanagedId);
-                restore.unmanagedId = null;
-            }
-            if (this._activeRestores?.get(win) === restore) {
-                this._activeRestores.delete(win);
-            }
-            resolveCompletion();
+            this._endRestore(win, restore);
         }
+    }
+
+    // Marks win as being restored, which holds off saving it, until
+    // _endRestore(); unmanaging the window cancels the pending move.
+    _beginRestore(win) {
+        const restore = {
+            unmanagedId: null,
+            unmanaged: false,
+            resolveCompletion: null,
+            completion: null,
+        };
+        restore.completion = new Promise((resolve) => {
+            restore.resolveCompletion = resolve;
+        });
+        restore.unmanagedId = win.connect("unmanaged", () => {
+            restore.unmanagedId = null;
+            restore.unmanaged = true;
+            this._cancelActiveRestore(win, restore);
+        });
+        this._activeRestores.set(win, restore);
+        return restore;
+    }
+
+    _endRestore(win, restore) {
+        if (restore.unmanagedId !== null) {
+            win.disconnect(restore.unmanagedId);
+            restore.unmanagedId = null;
+        }
+        if (this._activeRestores?.get(win) === restore) {
+            this._activeRestores.delete(win);
+        }
+        restore.resolveCompletion();
+    }
+
+    // Returns the geometry reached, or null when the move was cancelled.
+    async _moveWindowToTarget(win, target, attempt = 0) {
+        const retryCount = 5; // give the window more chances to be in the correct state before giving up - seems to help Firefox
+        const pWinRepr = this._windowRepr(win);
+        const nsw = await this._moveWindow(win, target);
+        if (nsw === null) return null;
+
+        const positionMatches = this._ignorePosition || (target.x === nsw.x && target.y === nsw.y);
+        const sizeMatches = target.width === nsw.width && target.height === nsw.height;
+        if (positionMatches && sizeMatches) {
+            const attemptText = attempt > 0 ? " (attempt " + (attempt + 1) + ")" : "";
+            this._debug(
+                `Geometry match after move${attemptText}: expected (${target.x}, ${target.y}, ${target.width}x${target.height}), got (${nsw.x}, ${nsw.y}, ${nsw.width}x${nsw.height}) for window ${pWinRepr}`
+            );
+            return nsw;
+        }
+
+        this.getLogger().warn(
+            `Geometry mismatch after move: expected (${target.x}, ${target.y}, ${target.width}x${target.height}), got (${nsw.x}, ${nsw.y}, ${nsw.width}x${nsw.height}) for window ${pWinRepr}`
+        );
+        if (attempt + 1 < retryCount) return this._moveWindowToTarget(win, target, attempt + 1);
+        return nsw;
     }
 
     _deoccupySavedWindow(windowHash) {
