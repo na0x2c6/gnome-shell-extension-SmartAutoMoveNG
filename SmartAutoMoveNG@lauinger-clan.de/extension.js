@@ -19,6 +19,8 @@ const QuickSettingsMenu = Main.panel.statusArea.quickSettings;
 // Mutter relocates windows while monitors come and go (also around suspend);
 // saving during that time would replace the user's layout with Mutter's.
 const MONITORS_CHANGED_SAVE_PAUSE_MS = 5000;
+// Window state compared to tell whether an open window needs re-placing.
+const RELAYOUT_KEYS = ["monitor", "x", "y", "width", "height", "maximized", "fullscreen"];
 // Apps reopening several windows (browsers restoring a session) create them
 // in a quick burst; slots are assigned once the burst is over.
 const MULTI_WINDOW_SETTLE_MS = 1000;
@@ -173,6 +175,7 @@ export default class SmartAutoMoveNG extends Extension {
         this._windowTracker = Shell.WindowTracker.get_default();
         this._startupTrackerConnected = false;
         this._savePausedUntil = 0;
+        this._relayoutTimeoutId = null;
         this._monitorLayout = this._monitorLayoutKey();
         Main.layoutManager.connectObject("monitors-changed", () => this._checkMonitorLayout(true), this);
 
@@ -243,6 +246,7 @@ export default class SmartAutoMoveNG extends Extension {
         this._cleanupWindowSignals();
         this._windowCreatedSignal = null;
         Main.layoutManager.disconnectObject(this);
+        this._relayoutTimeoutId = null;
         if (this._startupTrackerConnected) {
             this._windowTracker.disconnectObject(this);
             this._startupTrackerConnected = false;
@@ -866,9 +870,13 @@ export default class SmartAutoMoveNG extends Extension {
     // emitted, so the windows' own signals can be the first to see a change.
     _checkMonitorLayout(changed = false) {
         const monitorLayout = this._monitorLayoutKey();
-        if (!changed && monitorLayout === this._monitorLayout) return;
+        const layoutChanged = monitorLayout !== this._monitorLayout;
+        if (!changed && !layoutChanged) return;
         this._monitorLayout = monitorLayout;
         this._savePausedUntil = Date.now() + MONITORS_CHANGED_SAVE_PAUSE_MS;
+        // A new scale or resolution also emits monitors-changed; windows the
+        // user moves then must not be put back.
+        if (layoutChanged || this._relayoutTimeoutId !== null) this._scheduleRelayout();
     }
 
     _monitorConnector(monitor) {
@@ -1285,7 +1293,7 @@ export default class SmartAutoMoveNG extends Extension {
         }
     }
 
-    async _moveWindow(win, sw) {
+    async _moveWindow(win, sw, { keepWorkspace = false } = {}) {
         // Mutter 51 can resend the current geometry on redundant fullscreen exits,
         // overwriting a pending Wayland move. Clear unwanted states before moving.
         if (!sw.fullscreen && win.is_fullscreen()) win.unmake_fullscreen();
@@ -1294,7 +1302,7 @@ export default class SmartAutoMoveNG extends Extension {
         if (!this._ignoreMonitor) {
             this._moveWindowToMonitor(win, sw.monitor);
         }
-        if (!this._ignoreWorkspace) {
+        if (!this._ignoreWorkspace && !keepWorkspace) {
             // Sticking a window that was only shown everywhere because of its
             // monitor would keep it on all workspaces once on the primary one.
             this._moveWindowToWorkspace(
@@ -1481,10 +1489,10 @@ export default class SmartAutoMoveNG extends Extension {
     }
 
     // Returns the geometry reached, or null when the move was cancelled.
-    async _moveWindowToTarget(win, target, attempt = 0) {
+    async _moveWindowToTarget(win, target, options = {}, attempt = 0) {
         const retryCount = 5; // give the window more chances to be in the correct state before giving up - seems to help Firefox
         const pWinRepr = this._windowRepr(win);
-        const nsw = await this._moveWindow(win, target);
+        const nsw = await this._moveWindow(win, target, options);
         if (nsw === null) return null;
 
         const positionMatches = this._ignorePosition || (target.x === nsw.x && target.y === nsw.y);
@@ -1500,8 +1508,66 @@ export default class SmartAutoMoveNG extends Extension {
         this.getLogger().warn(
             `Geometry mismatch after move: expected (${target.x}, ${target.y}, ${target.width}x${target.height}), got (${nsw.x}, ${nsw.y}, ${nsw.width}x${nsw.height}) for window ${pWinRepr}`
         );
-        if (attempt + 1 < retryCount) return this._moveWindowToTarget(win, target, attempt + 1);
+        if (attempt + 1 < retryCount) return this._moveWindowToTarget(win, target, options, attempt + 1);
         return nsw;
+    }
+
+    // Mutter only moves windows off monitors that go away and leaves them
+    // there when the monitors come back, so open windows are put back where
+    // they were saved for the monitors now connected. Waits for the monitors
+    // to settle, as they can change several times in a row (e.g. on resume).
+    _scheduleRelayout() {
+        if (this._relayoutTimeoutId !== null) this._removeTimeout(this._relayoutTimeoutId);
+        this._relayoutTimeoutId = this._addTimeout(GLib.PRIORITY_DEFAULT, MONITORS_CHANGED_SAVE_PAUSE_MS, () => {
+            this._relayoutTimeoutId = null;
+            this._relayoutWindows().catch((error) => {
+                this.getLogger().error(`_relayoutWindows() failed: ${error}`);
+            });
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    async _relayoutWindows() {
+        const layoutKey = this._monitorLayoutKey();
+        const moves = [];
+        for (const win of this._trackedWindows.keys()) {
+            const target = this._relayoutTarget(win, layoutKey);
+            if (target !== null) moves.push(this._relayoutWindow(win, target));
+        }
+        await Promise.all(moves);
+    }
+
+    // Only a layout the window was saved in is restored; for a layout never
+    // seen, the last saved geometry is no better than Mutter's placement.
+    _relayoutTarget(win, layoutKey) {
+        if (this._activeRestores.has(win)) return null;
+        const wsh = this._windowSectionHash(win);
+        const [swi] = Common.findSavedWindow(this._savedWindows, wsh, { hash: this._windowHash(win), occupied: true }, 1);
+        if (swi === undefined) return null;
+        const sw = this._savedWindows[wsh][swi];
+        if (!sw.layouts?.[layoutKey]) return null;
+        if (this._findOverrideAction(win, 1) !== Common.SYNC_MODE_RESTORE) return null;
+
+        const target = this._restoreTarget(sw);
+        const current = this._windowData(win);
+        if (RELAYOUT_KEYS.every((key) => current[key] === target[key])) return null;
+        return target;
+    }
+
+    // The workspace is shared by all layouts and the user may have changed
+    // it since the monitors changed, so only the geometry is restored.
+    async _relayoutWindow(win, target) {
+        const restore = this._beginRestore(win);
+        try {
+            const pWinRepr = this._windowRepr(win);
+            const nsw = await this._moveWindowToTarget(win, target, { keepWorkspace: true });
+            if (nsw === null) return;
+
+            this._debug("_relayoutWindow() - moved: " + pWinRepr + " => " + JSON.stringify(nsw));
+            this._setRestoreSaveGuard(win);
+        } finally {
+            this._endRestore(win, restore);
+        }
     }
 
     _deoccupySavedWindow(windowHash) {

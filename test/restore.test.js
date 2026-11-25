@@ -147,7 +147,7 @@ class WaylandWindow {
     }
 }
 
-async function restoreGeometry(win, saved = savedWindow, options = {}) {
+async function restoreGeometry(win, saved = savedWindow, options = {}, moveOptions = {}) {
     const extension = new extensionModule.namespace.default();
     let completeMove;
     Object.assign(extension, {
@@ -163,7 +163,7 @@ async function restoreGeometry(win, saved = savedWindow, options = {}) {
         },
         ...options,
     });
-    const move = extension._moveWindow(win, saved);
+    const move = extension._moveWindow(win, saved, moveOptions);
     win.commit();
     completeMove();
     return move;
@@ -417,9 +417,14 @@ test("pauses saving when a window sees the monitors change before monitors-chang
     const win = appWindow(1, "chrome", "Project Board - Alpha");
     // Mutter has already moved the window off the unplugged monitor
     win.data = { ...saved, x: 100 };
+    let relayoutScheduled = false;
+    extension._scheduleRelayout = () => {
+        relayoutScheduled = true;
+    };
     withMonitors(["eDP-1"], 0, () => extension._ensureSavedWindow(win));
     assert.equal(extension._savedWindows.chrome[0].x, 2100);
     assert.ok(extension._savePausedUntil > Date.now());
+    assert.ok(relayoutScheduled);
 });
 
 function withMonitors(connectors, primary, body) {
@@ -526,6 +531,85 @@ test("keeps the geometry of other monitor layouts when saving", () => {
     const layouts = extension._savedWindows.chrome[0].layouts;
     assert.deepEqual(Object.keys(layouts).sort(), ["DP-1,eDP-1", "eDP-1"]);
     assert.equal(layouts["DP-1,eDP-1"], docked);
+});
+
+function relayoutExtension(savedWindows, windows) {
+    const extension = ciderExtension(savedWindows);
+    extension._trackedWindows = new Map(windows.map((win) => [win, {}]));
+    extension._moveWindow = async (win, target, options) => {
+        win.relaidOut = { target, options };
+        return target;
+    };
+    return extension;
+}
+
+const dockedLayouts = {
+    "DP-1,eDP-1": { x: 2500, y: 100, width: 800, height: 600, maximized: false, fullscreen: false, monitor: 1, monitor_connector: "DP-1" },
+    "eDP-1": { x: 40, y: 60, width: 700, height: 500, maximized: false, fullscreen: false, monitor: 0, monitor_connector: "eDP-1" },
+};
+
+test("re-places windows only when other monitors are connected", () => {
+    const extension = ciderExtension();
+    let scheduled = 0;
+    Object.assign(extension, {
+        _relayoutTimeoutId: null,
+        _scheduleRelayout() {
+            scheduled++;
+        },
+    });
+    extension._checkMonitorLayout(true);
+    assert.equal(scheduled, 0);
+    assert.ok(extension._savePausedUntil > Date.now());
+    withMonitors(["eDP-1"], 0, () => extension._checkMonitorLayout(true));
+    assert.equal(scheduled, 1);
+});
+
+test("puts open windows back where they were saved when monitors come back", async () => {
+    const saved = { ...savedWindow, title: "Project Board - Alpha", occupied: true, hash: 1, layouts: dockedLayouts };
+    const win = appWindow(1, "chrome", "Project Board - Alpha");
+    // where Mutter left it while the external monitor was gone
+    win.data = { ...saved, ...dockedLayouts["eDP-1"] };
+    const extension = relayoutExtension({ chrome: [saved] }, [win]);
+    await withMonitors(["eDP-1", "DP-1"], 0, () => extension._relayoutWindows());
+    assert.deepEqual([win.relaidOut.target.monitor, win.relaidOut.target.x], [1, 2500]);
+    assert.equal(win.relaidOut.options.keepWorkspace, true);
+    assert.equal(extension._activeRestores.size, 0);
+});
+
+test("leaves open windows alone when nothing was saved for the new monitors", async () => {
+    const onlyDocked = { "DP-1,eDP-1": dockedLayouts["DP-1,eDP-1"] };
+    const saved = { ...savedWindow, title: "Project Board - Alpha", occupied: true, hash: 1, layouts: onlyDocked };
+    const win = appWindow(1, "chrome", "Project Board - Alpha");
+    win.data = { ...saved, ...dockedLayouts["eDP-1"] };
+    const extension = relayoutExtension({ chrome: [saved] }, [win]);
+    await withMonitors(["eDP-1"], 0, () => extension._relayoutWindows());
+    assert.equal(win.relaidOut, undefined);
+});
+
+test("does not re-place windows already in place, saved for another window, or set to ignore", async () => {
+    const inPlace = appWindow(1, "chrome", "In place");
+    const unbound = appWindow(2, "chrome", "Unbound");
+    const ignored = appWindow(3, "chrome", "Ignored");
+    const saved = [
+        { ...savedWindow, title: "In place", occupied: true, hash: 1, layouts: dockedLayouts },
+        { ...savedWindow, title: "Unbound", occupied: false, hash: 2, layouts: dockedLayouts },
+        { ...savedWindow, title: "Ignored", occupied: true, hash: 3, layouts: dockedLayouts },
+    ];
+    inPlace.data = { ...saved[0], ...dockedLayouts["DP-1,eDP-1"], monitor: 1 };
+    unbound.data = { ...saved[1], ...dockedLayouts["eDP-1"] };
+    ignored.data = { ...saved[2], ...dockedLayouts["eDP-1"] };
+    const extension = relayoutExtension({ chrome: saved }, [inPlace, unbound, ignored]);
+    extension._overrides = { chrome: [{ query: { title: "Ignored" }, action: 0 }] };
+    await withMonitors(["eDP-1", "DP-1"], 0, () => extension._relayoutWindows());
+    assert.deepEqual([inPlace.relaidOut, unbound.relaidOut, ignored.relaidOut], [undefined, undefined, undefined]);
+});
+
+test("keeps the current workspace when only the geometry is restored", async () => {
+    const win = new WaylandWindow();
+    win.workspace = 2;
+    await restoreGeometry(win, { ...savedWindow, workspace: 0, on_all_workspaces: false }, {}, { keepWorkspace: true });
+    assert.equal(win.workspace, 2);
+    assert.equal(win.monitor, 1);
 });
 
 function multiWindowExtension(savedWindows = {}, options = {}) {
