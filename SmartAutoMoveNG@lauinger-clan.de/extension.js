@@ -173,13 +173,8 @@ export default class SmartAutoMoveNG extends Extension {
         this._windowTracker = Shell.WindowTracker.get_default();
         this._startupTrackerConnected = false;
         this._savePausedUntil = 0;
-        Main.layoutManager.connectObject(
-            "monitors-changed",
-            () => {
-                this._savePausedUntil = Date.now() + MONITORS_CHANGED_SAVE_PAUSE_MS;
-            },
-            this
-        );
+        this._monitorLayout = this._monitorLayoutKey();
+        Main.layoutManager.connectObject("monitors-changed", () => this._checkMonitorLayout(true), this);
 
         // Sync windows which might already be open before enabling the extension.
         this._syncWindows().catch((error) => {
@@ -867,6 +862,15 @@ export default class SmartAutoMoveNG extends Extension {
             .join(",");
     }
 
+    // Mutter moves windows off a removed monitor before monitors-changed is
+    // emitted, so the windows' own signals can be the first to see a change.
+    _checkMonitorLayout(changed = false) {
+        const monitorLayout = this._monitorLayoutKey();
+        if (!changed && monitorLayout === this._monitorLayout) return;
+        this._monitorLayout = monitorLayout;
+        this._savePausedUntil = Date.now() + MONITORS_CHANGED_SAVE_PAUSE_MS;
+    }
+
     _monitorConnector(monitor) {
         const logicalMonitor = global.backend
             .get_monitor_manager()
@@ -1191,6 +1195,7 @@ export default class SmartAutoMoveNG extends Extension {
     _ensureSavedWindow(win) {
         if (Main.screenShield?.active || Main.sessionMode?.isLocked) return;
 
+        this._checkMonitorLayout();
         if (Date.now() < this._savePausedUntil) return;
 
         if (this._nonPersistentWindows.has(win)) return;

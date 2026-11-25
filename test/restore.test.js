@@ -7,8 +7,20 @@ import { test } from "node:test";
 import { URL } from "node:url";
 import { createContext, SourceTextModule, SyntheticModule } from "node:vm";
 
+function monitorManager(connectors) {
+    return {
+        get_monitor_for_connector: (connector) => connectors.indexOf(connector),
+        get_logical_monitors: () =>
+            connectors.map((connector, index) => ({
+                get_number: () => index,
+                get_monitors: () => [{ get_connector: () => connector }],
+            })),
+    };
+}
+
 const context = createContext({
     global: {
+        backend: { get_monitor_manager: () => monitorManager(["eDP-1", "DP-1"]) },
         display: { get_n_monitors: () => 2 },
         workspace_manager: {
             n_workspaces: 3,
@@ -262,6 +274,8 @@ function ciderExtension(savedWindows = {}) {
     const extension = new extensionModule.namespace.default();
     Object.assign(extension, {
         _savedWindows: savedWindows,
+        _monitorLayout: "DP-1,eDP-1",
+        _savePausedUntil: 0,
         _windowRoles: new Map(),
         _nonPersistentWindows: new Map(),
         _activeRestores: new Map(),
@@ -397,17 +411,20 @@ test("does not save window geometry while monitors are being reconfigured", () =
     assert.equal(extension._savedWindows.chrome[0].x, 100);
 });
 
+test("pauses saving when a window sees the monitors change before monitors-changed", () => {
+    const saved = { ...savedWindow, title: "Project Board - Alpha", occupied: true, hash: 1, x: 2100 };
+    const extension = ciderExtension({ chrome: [saved] });
+    const win = appWindow(1, "chrome", "Project Board - Alpha");
+    // Mutter has already moved the window off the unplugged monitor
+    win.data = { ...saved, x: 100 };
+    withMonitors(["eDP-1"], 0, () => extension._ensureSavedWindow(win));
+    assert.equal(extension._savedWindows.chrome[0].x, 2100);
+    assert.ok(extension._savePausedUntil > Date.now());
+});
+
 function withMonitors(connectors, primary, body) {
-    context.global.backend = {
-        get_monitor_manager: () => ({
-            get_monitor_for_connector: (connector) => connectors.indexOf(connector),
-            get_logical_monitors: () =>
-                connectors.map((connector, index) => ({
-                    get_number: () => index,
-                    get_monitors: () => [{ get_connector: () => connector }],
-                })),
-        }),
-    };
+    const backend = context.global.backend;
+    context.global.backend = { get_monitor_manager: () => monitorManager(connectors) };
     const display = context.global.display;
     context.global.display = {
         get_n_monitors: () => connectors.length,
@@ -419,7 +436,7 @@ function withMonitors(connectors, primary, body) {
     try {
         return body();
     } finally {
-        delete context.global.backend;
+        context.global.backend = backend;
         context.global.display = display;
         delete context.global.workspace_manager.get_active_workspace;
     }
