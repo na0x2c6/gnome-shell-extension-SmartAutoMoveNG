@@ -10,6 +10,10 @@
     <value value="3" nick="Ignore Workspace" />
     <value value="4" nick="Ignore Monitor" />
   </enum>
+  <enum id="org.gnome.shell.extensions.SmartAutoMoveNGFork.workspace-restore-enum">
+    <value value="0" nick="ALWAYS" />
+    <value value="1" nick="SESSION_START" />
+  </enum>
   <schema id="org.gnome.shell.extensions.SmartAutoMoveNGFork" path="/org/gnome/shell/extensions/SmartAutoMoveNGFork/">
     <key name="saved-windows" type="s">
       <default>'{}'</default>
@@ -91,6 +95,17 @@
       <default>true</default>
       <summary>Multiple Windows per App</summary>
       <description>Save every window of an app separately instead of one window per app.</description>
+    </key>
+    <key name="workspace-restore" enum="org.gnome.shell.extensions.SmartAutoMoveNGFork.workspace-restore-enum">
+      <default>'SESSION_START'</default>
+      <summary>Workspace Restore</summary>
+      <description>When windows are moved to their saved workspace: always, or only at session start and when an app reopens several windows at once.</description>
+    </key>
+    <key name="session-start-period" type="i">
+      <default>60</default>
+      <range min="0" max="600" />
+      <summary>Session Start Period (seconds)</summary>
+      <description>How long after login opened windows are moved to their saved workspace.</description>
     </key>
     <key name="edit-saved-windows-workspace-max" type="i">
       <default>4</default>

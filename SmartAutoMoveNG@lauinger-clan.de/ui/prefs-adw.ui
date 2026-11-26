@@ -156,6 +156,37 @@
             <property name="tooltip-text" translatable="yes">Save every window of an app separately instead of one window per app.</property>
           </object>
         </child>
+        <child>
+          <object class="AdwComboRow" id="workspace-restore-combo">
+            <property name="model">
+              <object class="GtkStringList">
+                <items>
+                  <item translatable="yes">ALWAYS</item>
+                  <item translatable="yes">SESSION START</item>
+                </items>
+              </object>
+            </property>
+            <property name="subtitle" translatable="yes">Move windows to their saved workspace always, or only at session start and when an app reopens several windows at once. Windows opened by hand otherwise stay on the current workspace.</property>
+            <property name="title" translatable="yes">Workspace Restore</property>
+            <property name="tooltip-text" translatable="yes">Move windows to their saved workspace always, or only at session start and when an app reopens several windows at once. Windows opened by hand otherwise stay on the current workspace.</property>
+          </object>
+        </child>
+        <child>
+          <object class="AdwSpinRow" id="session-start-period-spin">
+            <property name="adjustment">
+              <object class="GtkAdjustment">
+                <property name="lower">0</property>
+                <property name="page-increment">30</property>
+                <property name="step-increment">5</property>
+                <property name="upper">600</property>
+                <property name="value">60</property>
+              </object>
+            </property>
+            <property name="subtitle" translatable="yes">How long after login opened windows are moved to their saved workspace.</property>
+            <property name="title" translatable="yes">Session Start Period (seconds)</property>
+            <property name="tooltip-text" translatable="yes">How long after login opened windows are moved to their saved workspace.</property>
+          </object>
+        </child>
       </object>
     </child>
   </object>

@@ -298,8 +298,9 @@ function ciderExtension(savedWindows = {}) {
             if (role !== null) data.window_role = role;
             return data;
         },
-        async _moveWindow(win, saved) {
+        async _moveWindow(win, saved, options = {}) {
             win.restored = saved;
+            win.keptWorkspace = options.keepWorkspace ?? false;
             return saved;
         },
     });
@@ -620,7 +621,9 @@ function multiWindowExtension(savedWindows = {}, options = {}) {
         _appWindows(wsh) {
             return this._openWindows.filter((win) => win.get_wm_class() === wsh);
         },
-        async _settleAppWindows() {},
+        async _settleAppWindows(_wsh, win) {
+            return new Set([win]);
+        },
         ...options,
     });
     return extension;
@@ -701,4 +704,135 @@ test("leaves a reopened window in place when no slot is similar enough", async (
     await extension._syncWindow(win);
     assert.equal(win.restored, undefined);
     assert.equal(extension._savedWindows.chrome.length, 2);
+});
+
+test("keeps a window opened by hand on the current workspace and records it there", async () => {
+    const saved = { ...savedWindow, title: "Settings", occupied: false, hash: 11, workspace: 1, on_all_workspaces: false };
+    const extension = multiWindowExtension({ settings: [saved] }, { _workspaceRestore: 1 });
+    const win = appWindow(1, "settings", "Settings");
+    win.data = { ...win.data, ...saved, hash: 1, occupied: true, workspace: 0, x: 0 };
+    extension._openWindows = [win];
+    await extension._syncWindow(win);
+    assert.equal(win.restored, saved);
+    assert.equal(win.keptWorkspace, true);
+    assert.equal(saved.workspace, 0);
+    assert.equal(saved.occupied, true);
+});
+
+test("moves windows to their saved workspace during the session start period", async () => {
+    const saved = { ...savedWindow, title: "Settings", occupied: false, hash: 11, workspace: 1 };
+    const extension = multiWindowExtension(
+        { settings: [saved] },
+        { _workspaceRestore: 1, _sessionStartedAt: Date.now(), _sessionStartPeriodMs: 60000 }
+    );
+    const win = appWindow(1, "settings", "Settings");
+    extension._openWindows = [win];
+    await extension._syncWindow(win);
+    assert.equal(win.restored, saved);
+    assert.equal(win.keptWorkspace, false);
+    assert.equal(saved.workspace, 1);
+});
+
+test("the session start period ends after the configured time", () => {
+    const extension = multiWindowExtension({}, { _sessionStartedAt: Date.now() - 61000, _sessionStartPeriodMs: 60000 });
+    assert.equal(extension._inSessionStart(), false);
+    extension._sessionStartPeriodMs = 0;
+    extension._sessionStartedAt = Date.now();
+    assert.equal(extension._inSessionStart(), false);
+});
+
+test("moves windows to their saved workspaces when an app reopens several at once", async () => {
+    const alphaSaved = { ...savedWindow, title: "Alpha", occupied: false, hash: 11, workspace: 1 };
+    const betaSaved = { ...savedWindow, title: "Beta", occupied: false, hash: 12, workspace: 2 };
+    const alpha = appWindow(1, "chrome", "Alpha");
+    const beta = appWindow(2, "chrome", "Beta");
+    const extension = multiWindowExtension(
+        { chrome: [alphaSaved, betaSaved] },
+        {
+            _workspaceRestore: 1,
+            _openWindows: [alpha, beta],
+            async _settleAppWindows() {
+                return new Set([alpha, beta]);
+            },
+        }
+    );
+    await extension._syncWindow(alpha);
+    await extension._syncWindow(beta);
+    assert.deepEqual([alpha.restored, beta.restored], [alphaSaved, betaSaved]);
+    assert.deepEqual([alpha.keptWorkspace, beta.keptWorkspace], [false, false]);
+});
+
+test("collects the windows of an app that arrive in one burst", async () => {
+    const timeouts = [];
+    const extension = multiWindowExtension({}, {
+        _settlingApps: new Map(),
+        _addTimeout(_priority, _interval, callback) {
+            timeouts.push(callback);
+            return timeouts.length;
+        },
+        _removeTimeout() {},
+    });
+    delete extension._settleAppWindows;
+    const first = extension._settleAppWindows("chrome", "first");
+    const second = extension._settleAppWindows("chrome", "second");
+    timeouts.at(-1)();
+    assert.deepEqual([...(await first)], ["first", "second"]);
+    assert.equal(await second, await first);
+    assert.equal(extension._settlingApps.size, 0);
+});
+
+test("always moves windows to their saved workspace when set to", async () => {
+    const saved = { ...savedWindow, title: "Settings", occupied: false, hash: 11, workspace: 1 };
+    const extension = multiWindowExtension({ settings: [saved] }, { _workspaceRestore: 0 });
+    const win = appWindow(1, "settings", "Settings");
+    extension._openWindows = [win];
+    await extension._syncWindow(win);
+    assert.equal(win.keptWorkspace, false);
+});
+
+for (const [global, override, kept] of [[1, 0, false], [0, 1, true]]) {
+    test(`an override ${override} beats the default ${global} for when windows go to their saved workspace`, async () => {
+        const saved = { ...savedWindow, title: "Chat", occupied: false, hash: 11, workspace: 2 };
+        const extension = multiWindowExtension(
+            { chat: [saved] },
+            { _workspaceRestore: global, _overrides: { chat: [{ workspace_restore: override }] } }
+        );
+        const win = appWindow(1, "chat", "Chat");
+        extension._openWindows = [win];
+        await extension._syncWindow(win);
+        assert.equal(win.keptWorkspace, kept);
+    });
+}
+
+test("prefers a slot from the current workspace for a window opened by hand", async () => {
+    const elsewhere = { ...savedWindow, title: "Terminal", occupied: false, hash: 11, workspace: 1, on_all_workspaces: false, width: 1000, height: 700 };
+    const here = { ...savedWindow, title: "Terminal", occupied: false, hash: 12, workspace: 0, on_all_workspaces: false, width: 800, height: 700 };
+    const extension = multiWindowExtension({ term: [elsewhere, here] }, { _workspaceRestore: 1 });
+    const win = appWindow(1, "term", "Terminal");
+    win.data = { ...win.data, workspace: 0, width: 1000, height: 700 };
+    extension._openWindows = [win];
+    await extension._syncWindow(win);
+    assert.equal(win.restored, here);
+});
+
+test("falls back to a slot from another workspace for a window opened by hand", async () => {
+    const elsewhere = { ...savedWindow, title: "Terminal", occupied: false, hash: 11, workspace: 1, on_all_workspaces: false };
+    const extension = multiWindowExtension({ term: [elsewhere] }, { _workspaceRestore: 1 });
+    const win = appWindow(1, "term", "Terminal");
+    win.data = { ...win.data, workspace: 0 };
+    extension._openWindows = [win];
+    await extension._syncWindow(win);
+    assert.equal(win.restored, elsewhere);
+    assert.equal(win.keptWorkspace, true);
+    assert.equal(elsewhere.workspace, 0);
+});
+
+test("keeps a window opened by hand on the current workspace with one slot per app", async () => {
+    const saved = { ...savedWindow, title: "Settings", occupied: false, hash: 11, workspace: 1 };
+    const extension = ciderExtension({ settings: [saved] });
+    extension._workspaceRestore = 1;
+    const win = appWindow(1, "settings", "Settings");
+    await extension._syncWindow(win);
+    assert.equal(win.restored, saved);
+    assert.equal(win.keptWorkspace, true);
 });

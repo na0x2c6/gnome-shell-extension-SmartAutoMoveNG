@@ -70,6 +70,8 @@ Advanced users can also adjust the **Startup Delay** (how long a new window is o
 
 Enable **Multiple Windows per App** to save every window of an application separately, e.g. several browser or PWA windows kept on different workspaces. Without it, one window per application is saved.
 
+**Workspace Restore** decides when windows are moved to their saved workspace. With `SESSION START` (the default), windows that open during the **Session Start Period** after login, and windows that an application reopens several at once, go to their saved workspace; a window you open by hand later stays on the workspace you are on and only gets its saved geometry. With `ALWAYS`, every restored window goes to its saved workspace.
+
 After you've dialed in your overrides, the learning apparatus can be paused. enable **Freeze Saves** to prevent changes to Saved Windows. N.B. this lose track of windows if their titles change.
 
 ### Overrides
@@ -87,6 +89,8 @@ You can change the IGNORE/RESTORE behavior here for apps and windows.
 For applications, a custom **Match Threshold** can be set.
 
 **Multiple Windows per App** can be turned on or off for a single application by adding `"multi_window": true` or `false` to its override (see [Settings](#settings)).
+
+**Workspace Restore** can be set for a single application with the workspace combo box (`ALWAYS`, `SESSION START` or `DEFAULT`), stored as `"workspace_restore": 0` or `1` in its override.
 
 ## Limitations
 
@@ -111,6 +115,8 @@ $ gnome-extensions enable SmartAutoMoveNG@lauinger-clan.de
 SmartAutoMoveNG saves one normal window slot per application identity (`WM_CLASS`). Additional matching windows restore from that slot without overwriting it. Browser picture-in-picture windows and the Cider miniplayer each have a separate slot from their application’s normal window.
 
 With **Multiple Windows per App**, every window gets a slot of its own (at most ten per application; the unused slot seen least recently is dropped first). When an application opens several windows in a burst, e.g. a browser restoring its session, SmartAutoMoveNG waits until the burst is over and then pairs the windows with the saved slots as a group, by title similarity, the size the window reopened with and its maximized state. A tag that an application sets on its window (Wayland `xdg-toplevel-tag`) identifies it on its own.
+
+A window opened by hand after the session start, while **Workspace Restore** is `SESSION START`, prefers a saved slot from the workspace it opened on; if it takes a slot from another workspace, that slot moves to the current workspace.
 
 Windows that are already open when the extension is enabled are left where they are. GNOME disables extensions while the screen is locked, so this keeps windows in place across lock and unlock.
 
@@ -141,6 +147,14 @@ Save every window of an application separately, except for Nautilus:
 ```
 $ dconf write /org/gnome/shell/extensions/SmartAutoMoveNG/multi-window true
 $ dconf write /org/gnome/shell/extensions/SmartAutoMoveNG/overrides '{"org.gnome.Nautilus": [{"multi_window": false}]}'
+```
+
+Move windows to their saved workspace only during the first two minutes after login, except for Slack, which always goes to its saved workspace:
+
+```
+$ dconf write /org/gnome/shell/extensions/SmartAutoMoveNG/workspace-restore "'SESSION_START'"
+$ dconf write /org/gnome/shell/extensions/SmartAutoMoveNG/session-start-period 120
+$ dconf write /org/gnome/shell/extensions/SmartAutoMoveNG/overrides '{"Slack": [{"workspace_restore": 0}]}'
 ```
 
 Default to ignoring windows unless explicitly defined. Restore all windows of the gnome-calculator app, all firefox windows except for the profile chooser, and Nautilus only if the window title is "Downloads":

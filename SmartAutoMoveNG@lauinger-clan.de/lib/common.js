@@ -15,6 +15,8 @@ export const SETTINGS_KEY_IGNORE_POSITION = "ignore-position";
 export const SETTINGS_KEY_IGNORE_WORKSPACE = "ignore-workspace";
 export const SETTINGS_KEY_IGNORE_MONITOR = "ignore-monitor";
 export const SETTINGS_KEY_MULTI_WINDOW = "multi-window";
+export const SETTINGS_KEY_WORKSPACE_RESTORE = "workspace-restore";
+export const SETTINGS_KEY_SESSION_START_PERIOD = "session-start-period";
 export const SETTINGS_KEY_OVERRIDES = "overrides";
 export const SETTINGS_KEY_MAX_WORKSPACE = "edit-saved-windows-workspace-max";
 export const SETTINGS_KEY_MAX_MONITOR = "edit-saved-windows-monitor-max";
@@ -27,6 +29,10 @@ export const SETTINGS_KEY_STALE_WINDOW_DAYS = "stale-window-days";
 // sync mode enum values
 export const SYNC_MODE_IGNORE = 0;
 export const SYNC_MODE_RESTORE = 1;
+
+// workspace restore enum values
+export const WORKSPACE_RESTORE_ALWAYS = 0;
+export const WORKSPACE_RESTORE_SESSION_START = 1;
 
 // Saved windows per app in multi-window mode; beyond this the unoccupied
 // slot that was seen least recently is dropped.
@@ -322,6 +328,7 @@ export function findOverride(overrides, wsh, sw, threshold) {
             override.action = o.action;
             override.threshold = o.threshold;
             override.multi_window = o.multi_window;
+            override.workspace_restore = o.workspace_restore;
             break;
         }
         const score = scoreWindow(sw, o.query);
@@ -329,6 +336,7 @@ export function findOverride(overrides, wsh, sw, threshold) {
             override.action = o.action;
             override.threshold = o.threshold;
             override.multi_window = o.multi_window;
+            override.workspace_restore = o.workspace_restore;
             break;
         }
     }

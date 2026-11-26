@@ -265,6 +265,9 @@ export default class SAMPreferences extends ExtensionPreferences {
         const startupdelayspin = builder.get_object("startup-delay-spin");
         startupdelayspin.set_climb_rate(100);
         startupdelayspin.set_numeric(true);
+        const sessionstartperiodspin = builder.get_object("session-start-period-spin");
+        sessionstartperiodspin.set_climb_rate(5);
+        sessionstartperiodspin.set_numeric(true);
         this._rebuildOverrides = true; // do we need to rebuild the overrides list?
         const settings = this.getSettings();
         const settingsSignalIds = [];
@@ -303,6 +306,8 @@ export default class SAMPreferences extends ExtensionPreferences {
             [Common.SETTINGS_KEY_IGNORE_WORKSPACE, "ignore-workspace-switch", "active"],
             [Common.SETTINGS_KEY_IGNORE_MONITOR, "ignore-monitor-switch", "active"],
             [Common.SETTINGS_KEY_MULTI_WINDOW, "multi-window-switch", "active"],
+            [Common.SETTINGS_KEY_WORKSPACE_RESTORE, "workspace-restore-combo", "selected"],
+            [Common.SETTINGS_KEY_SESSION_START_PERIOD, "session-start-period-spin", "value"],
         ];
 
         for (const [key, widgetId, property] of generalBindings) {
@@ -532,6 +537,23 @@ export default class SAMPreferences extends ExtensionPreferences {
             settings.set_string(Common.SETTINGS_KEY_OVERRIDES, JSON.stringify(overrides));
         });
 
+        const workspace_restore_widget = new Gtk.ComboBoxText();
+        workspace_restore_widget.append_text(_("ALWAYS"));
+        workspace_restore_widget.append_text(_("SESSION START"));
+        workspace_restore_widget.append_text(_("DEFAULT"));
+        workspace_restore_widget.set_tooltip_text(_("Workspace Restore"));
+        workspace_restore_widget.set_valign(Gtk.Align.CENTER);
+        row.add_suffix(workspace_restore_widget);
+        if (o.workspace_restore === undefined) workspace_restore_widget.set_active(2);
+        else workspace_restore_widget.set_active(o.workspace_restore);
+        const workspace_restore_signal = workspace_restore_widget.connect("changed", (combo) => {
+            let workspaceRestore = combo.get_active();
+            this._rebuildOverrides = false;
+            if (workspaceRestore === 2) workspaceRestore = undefined;
+            wshos[oi].workspace_restore = workspaceRestore;
+            settings.set_string(Common.SETTINGS_KEY_OVERRIDES, JSON.stringify(overrides));
+        });
+
         const delete_widget = new Gtk.Button({
             valign: Gtk.Align.CENTER,
             css_classes: ["destructive-action"],
@@ -550,6 +572,7 @@ export default class SAMPreferences extends ExtensionPreferences {
         list_objects.push({
             threshold: [threshold_signal, threshold_widget],
             action: [action_signal, action_widget],
+            workspace_restore: [workspace_restore_signal, workspace_restore_widget],
             delete: [delete_signal, delete_widget],
         });
     }
@@ -693,6 +716,8 @@ export default class SAMPreferences extends ExtensionPreferences {
                 Common.SETTINGS_KEY_IGNORE_WORKSPACE,
                 Common.SETTINGS_KEY_IGNORE_MONITOR,
                 Common.SETTINGS_KEY_MULTI_WINDOW,
+                Common.SETTINGS_KEY_WORKSPACE_RESTORE,
+                Common.SETTINGS_KEY_SESSION_START_PERIOD,
             ];
             for (const key of keys) {
                 if (settings.is_writable(key)) {
